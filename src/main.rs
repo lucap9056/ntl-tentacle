@@ -10,8 +10,10 @@ mod tracked_stream;
 use anyhow::Result;
 use config::Config;
 use relay::metadata::{CommonInfo, Metadata};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tls::TlsManager;
+use tokio::task::JoinSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,6 +22,82 @@ async fn main() -> Result<()> {
 
     tracing::info!("ntu-tentacle starting");
 
+    let mut relays: HashMap<String, Arc<relay::Relay>> = HashMap::new();
+    let mut tasks: JoinSet<()> = JoinSet::new();
+    let mut current: Vec<Metadata> = Vec::new();
+    let mut bootstrapped = false;
+
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sighup = signal(SignalKind::hangup()).expect("failed to install SIGHUP handler");
+
+    loop {
+        match load_metadatas().await {
+            Ok(metadatas) => {
+                for stale in Metadata::missing_targets(&current, &metadatas) {
+                    if let Some(r) = relays.remove(&stale.target_addr) {
+                        r.shutdown();
+                    }
+                }
+
+                for metadata in metadatas.iter().cloned() {
+                    let target_addr = metadata.target_addr.clone();
+                    match relays.get(&target_addr) {
+                        Some(existing) => existing.rotate_generation(metadata),
+                        None => {
+                            let r = Arc::new(relay::Relay::new(metadata));
+                            relays.insert(target_addr.clone(), r.clone());
+                            tasks.spawn(async move {
+                                if let Err(e) = r.run().await {
+                                    tracing::error!(target = %target_addr, error = ?e, "runtime fatal error");
+                                }
+                            });
+                        }
+                    }
+                }
+
+                current = metadatas;
+                bootstrapped = true;
+            }
+            Err(e) if !bootstrapped => return Err(e),
+            Err(e) => {
+                tracing::error!(error = ?e, "reload failed, keeping current configuration");
+            }
+        }
+
+        while tasks.try_join_next().is_some() {}
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("received SIGINT, shutting down");
+                break;
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("received SIGTERM, shutting down");
+                break;
+            }
+            _ = sighup.recv() => {
+                tracing::info!("received SIGHUP, reloading configuration");
+            }
+        }
+    }
+
+    for relay in relays.values() {
+        relay.shutdown();
+    }
+
+    while let Some(res) = tasks.join_next().await {
+        if let Err(e) = res {
+            tracing::error!(error = ?e, "relay task panicked");
+        }
+    }
+
+    tracing::info!("ntu-tentacle stopped");
+
+    Ok(())
+}
+
+async fn load_metadatas() -> Result<Vec<Metadata>> {
     let cfg = match config::load() {
         Ok(c) => c,
         Err(e) => {
@@ -34,24 +112,7 @@ async fn main() -> Result<()> {
         return Err(e.into());
     }
 
-    let metadatas = expand_targets(cfg).await?;
-
-    let handles: Vec<_> = metadatas
-        .into_iter()
-        .map(|metadata| {
-            let target_addr = metadata.target_addr.clone();
-            tokio::spawn(async move {
-                let r = relay::Relay::new(metadata);
-                if let Err(e) = r.run().await {
-                    tracing::error!(target = %target_addr, error = ?e, "runtime fatal error");
-                }
-            })
-        })
-        .collect();
-
-    futures::future::join_all(handles).await;
-
-    Ok(())
+    expand_targets(cfg).await
 }
 
 async fn expand_targets(config: Config) -> Result<Vec<Metadata>> {

@@ -1,17 +1,17 @@
 [package]
 name = "ntu-tentacle"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [package.metadata.nautrouds]
 min_core_ref = "26070722-9237c47"
 
 [dependencies]
+arc-swap = "1"
 tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-futures = "0.3"
 tokio-util = { version = "0.7", features = ["full"] }
 tentacle-metrics = { git = "https://github.com/nautrouds/tentacle-metrics.git", tag = "v1.1.0" }
 prost = "0.13.5"

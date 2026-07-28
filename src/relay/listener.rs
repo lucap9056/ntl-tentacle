@@ -108,34 +108,31 @@ async fn accept_loop(
                     Ok((uds_stream, addr)) => {
                         let snapshot = generation.load_full();
                         let pool = snapshot.pool.clone();
-                        // Blocks/queues here once the pool is full, until a permit frees up.
-                        let permit = match pool.clone().acquire_owned().await {
-                            Ok(p) => p,
-                            Err(_) => {
-                                error!("connection pool semaphore exhausted");
-                                break;
-                            }
-                        };
-
                         let metadata = &snapshot.metadata;
-
-                        debug!(
-                            client = ?addr,
-                            active_conns = metadata.common.max_connections - pool.available_permits(),
-                            "connection accepted"
-                        );
-
                         let metrics = metrics.clone();
                         let target_addr = metadata.target_addr.clone();
                         let target_tls = metadata.target_tls.clone();
+                        let max_connections = metadata.common.max_connections;
 
-                        tokio::spawn(handle_connection(
-                            uds_stream,
-                            permit,
-                            metrics,
-                            target_addr,
-                            target_tls,
-                        ));
+                        // Acquired in the spawned task, not here, so a full pool can't stall accept_loop.
+                        tokio::spawn(async move {
+                            let permit = match pool.clone().acquire_owned().await {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    error!("connection pool semaphore closed");
+                                    return;
+                                }
+                            };
+
+                            debug!(
+                                client = ?addr,
+                                active_conns = max_connections - pool.available_permits(),
+                                "connection accepted"
+                            );
+
+                            handle_connection(uds_stream, permit, metrics, target_addr, target_tls)
+                                .await;
+                        });
                     }
                     Err(e) => {
                         error!(error = ?e, "uds accept failure");
@@ -168,6 +165,11 @@ async fn handle_connection(
 
     match TcpStream::connect(&target_addr).await {
         Ok(tcp_stream) => {
+            // Nagle's algorithm otherwise adds up to ~40ms per small gRPC frame.
+            if let Err(e) = tcp_stream.set_nodelay(true) {
+                debug!(target = %target_addr, error = ?e, "failed to set TCP_NODELAY");
+            }
+
             if target_tls.is_enabled() {
                 match target_tls.connect(tcp_stream).await {
                     Ok(tls_stream) => {

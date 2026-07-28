@@ -50,6 +50,7 @@ Configuration is read from environment variables.
 | `NAUTROUDS_SERVICES_DIR` | Base directory under which service socket directories are created | `/var/run/nautrouds/services` |
 | `NAUTROUDS_MAX_CONNS` | Maximum concurrent connections per target | `1024` |
 | `NAUTROUDS_METRICS_INTERVAL_SECS` | Interval, in seconds, between metrics pushes | `15` |
+| `NAUTROUDS_PID_DIR` | Directory where the `<service_name>.pid` file is written | `/usr/local/tentacle` |
 
 ### Targets YAML file (optional, for per-target TLS)
 
@@ -72,12 +73,12 @@ secure-backend:9443:
 ```bash
 export NAUTROUDS_SERVICE_NAME=myapp
 export NAUTROUDS_TARGET_ADDR=localhost:8080
-./target/release/ntu-tentacle
+./target/release/tentacle
 ```
 
 ## Reload
 
 ```bash
-ntu-tentacle -r myapp   # or: --reload myapp
-ntu-tentacle -r         # falls back to resolving the service name from the environment
+tentacle -r /usr/local/tentacle/myapp.pid   # or: --reload <path>
+tentacle -r                                 # falls back to the current service's pid file, derived from the environment
 ```

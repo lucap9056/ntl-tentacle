@@ -50,6 +50,7 @@ docker build -f docker/Dockerfile -t ntu-tentacle .
 | `NAUTROUDS_SERVICES_DIR` | 建立服務 socket 目錄的根目錄 | `/var/run/nautrouds/services` |
 | `NAUTROUDS_MAX_CONNS` | 每個 target 的最大同時連線數 | `1024` |
 | `NAUTROUDS_METRICS_INTERVAL_SECS` | 兩次 metrics 推送之間的間隔秒數 | `15` |
+| `NAUTROUDS_PID_DIR` | `<service_name>.pid` 檔案寫入的目錄 | `/usr/local/tentacle` |
 
 ### Targets YAML 檔（選填，用於 per-target TLS 設定）
 
@@ -72,12 +73,12 @@ secure-backend:9443:
 ```bash
 export NAUTROUDS_SERVICE_NAME=myapp
 export NAUTROUDS_TARGET_ADDR=localhost:8080
-./target/release/ntu-tentacle
+./target/release/tentacle
 ```
 
 ## Reload
 
 ```bash
-ntu-tentacle -r myapp   # 或：--reload myapp
-ntu-tentacle -r         # 不帶名稱時，會從環境變數解析 service name
+tentacle -r /usr/local/tentacle/myapp.pid   # 或：--reload <path>
+tentacle -r                                 # 不帶路徑時，會從環境變數推算目前 service 的 pid file
 ```

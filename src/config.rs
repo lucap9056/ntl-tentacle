@@ -4,15 +4,19 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Target {
     pub addr: String,
+    pub weight: Option<u32>,
     pub ca: Option<PathBuf>,
     pub cert: Option<PathBuf>,
     pub key: Option<PathBuf>,
 }
 
 impl Target {
+    pub const MAX_WEIGHT: u32 = 100;
+
     pub fn from(addr: String) -> Self {
         Self {
             addr,
+            weight: None,
             ca: None,
             cert: None,
             key: None,

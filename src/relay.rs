@@ -39,7 +39,9 @@ pub struct Relay {
 
 impl Relay {
     pub fn new(metadata: Metadata) -> Self {
-        let metrics = Arc::new(MetricsManager::new());
+        let metrics = Arc::new(MetricsManager::new(
+            metadata.common.metrics_socket_path.is_some(),
+        ));
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         Self {
             generation: Arc::new(ArcSwap::from_pointee(Generation::new(metadata))),
@@ -110,11 +112,16 @@ impl Relay {
     }
 
     fn spawn_reporter(&self) {
+        let metadata = &self.generation.load().metadata;
+        let Some(metrics_socket_path) = metadata.common.metrics_socket_path.clone() else {
+            debug!("metrics socket disabled, reporter not started");
+            return;
+        };
+
         let metrics = self.metrics.clone();
         let mut shutdown_rx = self.shutdown_rx.clone();
         let generation = self.generation.clone();
 
-        let metadata = &self.generation.load().metadata;
         let service_name = metadata.common.service_name.clone();
         let metrics_interval_secs = metadata.common.metrics_interval_secs;
         let mut metrics_interval = interval(Duration::from_secs(metrics_interval_secs));
@@ -130,7 +137,7 @@ impl Relay {
                         snap.tentacle_id.clone_from(&current.metadata.socket_id);
                         if let Err(e) = Self::push_metrics_once(
                             &metrics,
-                            &current.metadata.socket_path,
+                            &metrics_socket_path,
                             &mut snap,
                             &mut buf,
                             &mut frame,
@@ -258,6 +265,7 @@ mod tests {
                 max_connections,
                 service_name: "test".to_string(),
                 metrics_interval_secs: 1,
+                metrics_socket_path: None,
             }),
             socket_id: "test".to_string(),
             socket_path: PathBuf::from("/tmp/test.sock"),
